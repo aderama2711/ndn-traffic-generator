@@ -699,7 +699,7 @@ main(int argc, char* argv[])
 
   if (vm.count("mode") > 0) {
     int y = vm["mode"].as<int>();
-    if y != 1 && y != 2{
+    if (y != 1 && y != 2){
       return 2;
     }
     mode_selection(y);

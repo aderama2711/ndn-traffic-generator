@@ -24,6 +24,12 @@ Compiling and running ndn-traffic-generator requires the following dependencies:
 sudo ./waf install
 ```
 
+## Modification
++ Zipf-Mandelbrot Distribution
++ TrafficPercentage don't have any effect to distribution (prefix generated based on distribution, PLEASE CHANGE TRAFFIC PERCENTAGE TO 1!)
++ There is python code for configuration file generator 
++ Generate .csv file for overall traffic information and per-packet information
+
 ## Command Line Options
 
 ### `ndn-traffic-server`
@@ -49,6 +55,9 @@ sudo ./waf install
       -c [ --count ] arg            total number of Interests to be generated
       -i [ --interval ] arg (=1000) Interest generation interval in milliseconds
       -q [ --quiet ]                turn off logging of Interest generation/Data reception
+      -m [ --mode ] arg             (int) Distribution choice : 1. Uniform, 2. Zipf-Mandelbrot; Default = Uniform
+      -z [ --zipffactor ] arg       (float) Used in Zipf-Mandelbrot as s value, default = 1.75
+      -v [ --qvalue ] arg           (float) Used in Zipf-Mandelbrot as q value, default = 0
 
 * These tools need not be used together and can be used individually as well.
 * Please refer to the sample configuration files provided for details on how to create your own.

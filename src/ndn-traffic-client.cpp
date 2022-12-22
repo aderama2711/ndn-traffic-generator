@@ -43,9 +43,39 @@
 #include <boost/program_options/parsers.hpp>
 #include <boost/program_options/variables_map.hpp>
 
+//header for zipf distribution
+#include "discrete_distribution.h"
+#include "discrete_distribution_ii.h"
+#include "zipf-mandelbrot.h"
+
+
+//header for custom log
+#include <iostream>
+using std::cerr;
+using std::endl;
+#include <fstream>
+using std::ofstream;
+#include <cstdlib>
+
 namespace po = boost::program_options;
 using namespace ndn::time_literals;
 using namespace std::string_literals;
+
+// default configuration
+int mode = 1, nprefix = 0, total_percentage=0;
+float zipffactor = 0.8, qvalue = 3; 
+
+void mode_selection(int x){
+  pil = x;
+}
+
+void qvalue_assign(float x){
+  qvalue = x;
+}
+
+void zipffactor_assign(float x){
+  zipffactor = x;
+}
 
 namespace ndntg {
 
@@ -86,6 +116,16 @@ public:
   run()
   {
     m_logger.initializeLog(std::to_string(ndn::random::generateWord32()));
+
+    //generate file for rtt/packet
+    ofstream outfile;
+    outfile.open("interest.csv");
+    if( !outfile){
+      cerr << "Error FILE" << endl;
+    }
+
+    outfile << "interest,rtt(ms)" << endl;
+    outfile.close();
 
     if (!readConfigurationFile(m_configurationFile, m_trafficPatterns, m_logger)) {
       return 2;
@@ -178,9 +218,15 @@ private:
 
       if (parameter == "TrafficPercentage") {
         m_trafficPercentage = std::stoul(value);
+
+        //calculate total_percentage
+        total_percentage += x;
       }
       else if (parameter == "Name") {
         m_name = value;
+
+        //calculate number of prefix
+        nprefix++;
       }
       else if (parameter == "NameAppendBytes") {
         m_nameAppendBytes = std::stoul(value);
@@ -274,6 +320,16 @@ private:
     m_logger.log("Average Round Trip Time     = " +
                  std::to_string(average) + "ms\n", false, true);
 
+    //generate log.csv for overall status
+    ofstream outdata;
+    outdata.open("log.csv");
+    if( !outdata){
+      cerr << "Error FILE" << endl;
+    }
+
+    outdata << "PatternID,InterestSent,ResponsesReceived,Nacks,InterestLoss(%),Inconsistency(%),TotalRTT(ms),AverageRTT(ms)" << endl;
+    outdata << "Overall," << to_string(m_nInterestsSent) << "," << to_string(m_nInterestsReceived) << "," << to_string(m_nNacks) << "," << to_string(loss) << "," << to_string(inconsistency) << "," << to_string(m_totalInterestRoundTripTime) << "," << to_string(average) << "," << endl;
+
     for (std::size_t patternId = 0; patternId < m_trafficPatterns.size(); patternId++) {
       m_logger.log("Traffic Pattern Type #" + std::to_string(patternId + 1), false, true);
       m_trafficPatterns[patternId].printTrafficConfiguration(m_logger);
@@ -302,7 +358,13 @@ private:
       m_logger.log("Total Round Trip Time       = " +
                    std::to_string(m_trafficPatterns[patternId].m_totalInterestRoundTripTime) + "ms", false, true);
       m_logger.log("Average Round Trip Time     = " + std::to_string(average) + "ms\n", false, true);
+
+      //per traffic log
+      outdata << to_string(patternId + 1) << "," << to_string(m_trafficPatterns[patternId].m_nInterestsSent) << "," << to_string(m_trafficPatterns[patternId].m_nInterestsReceived) << "," << to_string(m_trafficPatterns[patternId].m_nNacks) << "," << to_string(loss) << "," << to_string(inconsistency) << "," << to_string(m_trafficPatterns[patternId].m_totalInterestRoundTripTime) << "," << to_string(average) << endl; 
     }
+
+    //close output file
+    outdata.close();
   }
 
   bool
@@ -387,7 +449,7 @@ private:
 
   void
   onData(const ndn::Data& data, int globalRef, int localRef, std::size_t patternId,
-         const time::steady_clock::time_point& sentTime)
+         const time::steady_clock::time_point& sentTime, const Interest& interest)
   {
     auto logLine = "Data Received      - PatternType=" + std::to_string(patternId + 1) +
                    ", GlobalID=" + std::to_string(globalRef) +
@@ -426,6 +488,16 @@ private:
       m_trafficPatterns[patternId].m_maximumInterestRoundTripTime = roundTripTime;
     m_totalInterestRoundTripTime += roundTripTime;
     m_trafficPatterns[patternId].m_totalInterestRoundTripTime += roundTripTime;
+
+    //log rtt per packet
+    ofstream outfile;
+    outfile.open("interest.csv", std::ios_base::app);
+    if( !outfile){
+      cerr << "Error FILE" << endl;
+    }
+    outfile << interest << "," << to_string(roundTripTime) << endl;
+    outfile.close();
+
 
     if (m_nMaximumInterests == globalRef) {
       stop();
@@ -472,8 +544,18 @@ private:
       return;
     }
 
-    static std::uniform_int_distribution<> trafficDist(1, 100);
-    int trafficKey = trafficDist(ndn::random::getRandomNumberEngine());
+    int trafficKey;
+
+    if (pil == 1){
+      static std::uniform_int_distribution<> trafficDist(1, total_percentage);
+      trafficKey = trafficDist(random::getRandomNumberEngine());
+    }
+
+    if (pil == 2){
+      static rng::zipf_mandelbrot_distribution<rng::discrete_distribution_30bit,int> trafficDistZipf(zipffactor, qvalue, nprefix);
+      trafficKey = trafficDistZipf(random::getRandomNumberEngine());
+      trafficKey -= (qvalue-1);
+    }
 
     int cumulativePercentage = 0;
     std::size_t patternId = 0;
@@ -487,7 +569,7 @@ private:
           auto sentTime = time::steady_clock::now();
           m_face.expressInterest(interest,
                                  bind(&NdnTrafficClient::onData, this, _2, m_nInterestsSent,
-                                      m_trafficPatterns[patternId].m_nInterestsSent, patternId, sentTime),
+                                      m_trafficPatterns[patternId].m_nInterestsSent, patternId, sentTime, interest),
                                  bind(&NdnTrafficClient::onNack, this, _1, _2, m_nInterestsSent,
                                       m_trafficPatterns[patternId].m_nInterestsSent, patternId),
                                  bind(&NdnTrafficClient::onTimeout, this, _1, m_nInterestsSent,
@@ -565,6 +647,11 @@ usage(std::ostream& os, std::string_view programName, const po::options_descript
      << "Interests are continuously generated unless a total number is specified.\n"
      << "Set the environment variable NDN_TRAFFIC_LOGFOLDER to redirect output to a log file.\n"
      << "\n"
+     << "Modification :\n"
+     << "+ Zipf-Mandelbrot Distribution\n"
+     << "Warning\n"
+     << "- Please set all traffic percentage to 1\n"
+     << "\n"
      << desc;
 }
 
@@ -580,6 +667,9 @@ main(int argc, char* argv[])
     ("interval,i",  po::value<ndn::time::milliseconds::rep>()->default_value(1000),
                     "Interest generation interval in milliseconds")
     ("quiet,q",     po::bool_switch(), "turn off logging of Interest generation/Data reception")
+    ("mode,m",      po::value<int>(), "(int) Distribution choice : 1. Uniform, 2. Zipf-Mandelbrot; Default = Uniform")
+    ("zipffactor,z",po::value<float>(), "(float) Used in Zipf-Mandelbrot as s value, default = 0.5")
+    ("qvalue,v",   po::value<float>(), "(float) Used in Zipf-Mandelbrot as q value, default = 0")
     ;
 
   po::options_description hiddenOptions;
@@ -605,6 +695,24 @@ main(int argc, char* argv[])
   catch (const boost::bad_any_cast& e) {
     std::cerr << "ERROR: " << e.what() << std::endl;
     return 2;
+  }
+
+  if (vm.count("mode") > 0) {
+    int y = vm["mode"].as<int>();
+    if y != 1 && y != 2{
+      return 2;
+    }
+    mode_selection(y);
+  }
+
+  if (vm.count("zipffactor") > 0) {
+    float y = vm["zipffactor"].as<float>();
+    zipffactor_assign(y);
+  }
+
+  if (vm.count("qvalue") > 0) {
+    float y = vm["qvalue"].as<float>();
+    qvalue_assign(y);
   }
 
   if (vm.count("help") > 0) {

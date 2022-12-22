@@ -7,8 +7,7 @@ def main(argv):
 
     #initialize default
     size = 100
-    name = "/ndn/telu/fif/%C1.Router/router2/"
-    #prefix = "/ndn/telu/fif/lab/ndn"
+    name = "/ndn/Telkom-University/FTE/Ade"
     mode = True
     freshness = 60000
     csize = 1024
@@ -24,7 +23,7 @@ def main(argv):
     #checking argument
     for opt, arg in opts :
         if opt in ("-h", "--help") :
-            print ("Generator for \"ndn-traffic-generator\" configuration file!\nOptions :\n\t-h [ --help ] arg \t\tPrint this help message and hope it helps :)\n\t-s [ --size ] arg \t\tSet number of prefix, default = 100\n\t-n [ --name ] arg \t\tSet name for every TrafficPattern, format = (name)/traffic(iteration_number)\n\t\t\t\t\tExample : \n\t\t\t\t\tif input name = /ndn/telu/fte/%C1.Router/router2 \n\t\t\t\t\tthen name for TrafficPattern 1 is /ndn/telu/fte/%%C1.Router/router2/prefix1 and so on\n\t-m [ --mode ] arg \t\tInput 1 for MustBeFresh true and 0 for MustBeFresh false, default=1\n\t-f [ --freshness ] arg \t\tSet FreshnessPeriod in ms, default = 60000\n\t-c [ --contentsize ] arg \t\tSet ContentSize in Bytes, default = 1024")
+            print ("Generator for \"ndn-traffic-generator\" configuration file!\nOptions :\n\t-h [ --help ] arg \t\tPrint this help message and hope it helps :)\n\t-s [ --size ] arg \t\tSet number of prefix, default = 100\n\t-n [ --name ] arg \t\tSet name for every TrafficPattern, format = (name)/traffic(iteration_number)\n\t\t\t\t\tExample : \n\t\t\t\t\tif input name = /ndn/Telkom-University/FTE/Ade \n\t\t\t\t\tthen name for TrafficPattern 1 is /ndn/Telkom-University/FTE/Ade/prefix1 and so on\n\t-m [ --mode ] arg \t\tInput 1 for MustBeFresh true and 0 for MustBeFresh false, default=1\n\t-f [ --freshness ] arg \t\tSet FreshnessPeriod in ms, default = 60000\n\t-c [ --contentsize ] arg \t\tSet ContentSize in Bytes, default = 1024")
             sys.exit()
         elif opt in ("-s", "--size") :
             size = int(arg)

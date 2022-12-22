@@ -11,8 +11,8 @@
 # * 'Boolean' ACCEPTS EITHER 0/false/no/off OR 1/true/yes/on AS VALUE
 # * 'NNI' STANDS FOR NON-NEGATIVE INTEGER
 # * RANGE OF POSSIBLE VALUES IS SPECIFIED IN []
-# * PLEASE ENSURE THAT THE SUM OF 'TrafficPercentage' FOR ALL DECLARED
-#   PATTERNS DOES NOT EXCEED 100 IN ORDER TO MAINTAIN CORRECT BEHAVIOR
+# * PLEASE SET 'TrafficPercentage' TO 1
+#   FOR PROGRAM TO ADAPT WITH DISTRIBUTION IN ORDER TO MAINTAIN CORRECT BEHAVIOR
 #
 
 # (Mandatory)
@@ -24,7 +24,7 @@
 #NameAppendSequenceNumber=NNI [>=0]
 #CanBePrefix=Boolean
 #MustBeFresh=Boolean
-#NonceDuplicationPercentage=NNI [0-100]
+#NonceDuplicationPercentage=1
 #InterestLifetime=Milliseconds [>=0]
 #NextHopFaceId=NNI [>0]
 #ExpectedContent=String
@@ -32,11 +32,11 @@
 ##########
 # EXAMPLES
 ##########
-TrafficPercentage=50
+TrafficPercentage=1
 Name=/example/A
 ExpectedContent=AAAAAAAA
 ##########
-TrafficPercentage=50
+TrafficPercentage=1
 Name=/example/B
 ExpectedContent=BBBBBBBB
 ##########

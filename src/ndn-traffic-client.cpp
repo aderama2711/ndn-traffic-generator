@@ -55,6 +55,7 @@ using std::cerr;
 using std::endl;
 #include <fstream>
 using std::ofstream;
+using std::to_string;
 #include <cstdlib>
 
 namespace po = boost::program_options;
@@ -66,7 +67,7 @@ int mode = 1, nprefix = 0, total_percentage=0;
 float zipffactor = 0.8, qvalue = 3; 
 
 void mode_selection(int x){
-  pil = x;
+  mode = x;
 }
 
 void qvalue_assign(float x){
@@ -220,7 +221,7 @@ private:
         m_trafficPercentage = std::stoul(value);
 
         //calculate total_percentage
-        total_percentage += x;
+        total_percentage += m_trafficPercentage;
       }
       else if (parameter == "Name") {
         m_name = value;
@@ -449,7 +450,7 @@ private:
 
   void
   onData(const ndn::Data& data, int globalRef, int localRef, std::size_t patternId,
-         const time::steady_clock::time_point& sentTime, const Interest& interest)
+         const time::steady_clock::time_point& sentTime, const ndn::Interest& interest)
   {
     auto logLine = "Data Received      - PatternType=" + std::to_string(patternId + 1) +
                    ", GlobalID=" + std::to_string(globalRef) +
@@ -546,15 +547,15 @@ private:
 
     int trafficKey;
 
-    if (pil == 1){
+    if (mode == 1){
       static std::uniform_int_distribution<> trafficDist(1, total_percentage);
-      trafficKey = trafficDist(random::getRandomNumberEngine());
+      trafficKey = trafficDist(ndn::random::getRandomNumberEngine());
     }
 
-    if (pil == 2){
+    if (mode == 2){
       static rng::zipf_mandelbrot_distribution<rng::discrete_distribution_30bit,int> trafficDistZipf(zipffactor, qvalue, nprefix);
-      trafficKey = trafficDistZipf(random::getRandomNumberEngine());
-      trafficKey -= (qvalue-1);
+      trafficKey = trafficDistZipf(ndn::random::getRandomNumberEngine());
+      trafficKey -= qvalue;
     }
 
     int cumulativePercentage = 0;

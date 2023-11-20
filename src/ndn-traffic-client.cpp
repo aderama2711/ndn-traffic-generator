@@ -138,7 +138,7 @@ public:
   int
   run()
   {
-    m_logger.initialize(std::to_string(ndn::random::generateWord32()));
+    m_logger.initialize(std::to_string(ndn::random::generateWord32()), m_timestampFormat);
 
     //generate file for rtt/packet
     ofstream outfile;

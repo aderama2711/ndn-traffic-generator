@@ -138,7 +138,7 @@ public:
   int
   run()
   {
-    m_logger.initializeLog(std::to_string(ndn::random::generateWord32()));
+    m_logger.initialize(std::to_string(ndn::random::generateWord32()));
 
     //generate file for rtt/packet
     ofstream outfile;
@@ -338,16 +338,6 @@ private:
     m_logger.log("Total Data Inconsistency    = " + to_string(inconsistency) + "%", false, true);
     m_logger.log("Total Round Trip Time       = " + to_string(m_totalInterestRoundTripTime) + "ms", false, true);
     m_logger.log("Average Round Trip Time     = " + to_string(average) + "ms\n", false, true);
-
-    //generate log.csv for overall status
-    ofstream outdata;
-    outdata.open("log.csv");
-    if( !outdata){
-      cerr << "Error FILE" << endl;
-    }
-
-    outdata << "PatternID,InterestSent,ResponsesReceived,Nacks,InterestLoss(%),Inconsistency(%),TotalRTT(ms),AverageRTT(ms)" << endl;
-    outdata << "Overall," << to_string(m_nInterestsSent) << "," << to_string(m_nInterestsReceived) << "," << to_string(m_nNacks) << "," << to_string(loss) << "," << to_string(inconsistency) << "," << to_string(m_totalInterestRoundTripTime) << "," << to_string(average) << "," << endl;
 
     //generate log.csv for overall status
     ofstream outdata;
@@ -568,7 +558,7 @@ private:
     int trafficKey;
 
     if (mode == 1){
-      static std::uniform_int_distribution<> trafficDist(1, total_percentage);
+      static std::uniform_int_distribution<> trafficDist(1, m_trafficPercentage);
       trafficKey = trafficDist(ndn::random::getRandomNumberEngine());
     }
 

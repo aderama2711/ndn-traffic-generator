@@ -62,7 +62,7 @@ sudo ./waf install
       -q [ --quiet ]                turn off logging of Interest generation/Data reception
       -m [ --mode ] arg             (int) Distribution choice : 1. Uniform, 2. Zipf-Mandelbrot; Default = Uniform
       -z [ --zipffactor ] arg       (float) Used in Zipf-Mandelbrot as s value, default = 1.75
-      -v [ --qvalue ] arg           (float) Used in Zipf-Mandelbrot as q value, default = 0
+      -qv [ --qvalue ] arg           (float) Used in Zipf-Mandelbrot as q value, default = 0
 
 * These tools need not be used together and can be used individually as well.
 * Please refer to the sample configuration files provided for details on how to create your own.

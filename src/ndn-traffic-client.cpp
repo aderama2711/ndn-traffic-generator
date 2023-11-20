@@ -1,6 +1,6 @@
 /* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
- * Copyright (c) 2014-2022, Arizona Board of Regents.
+ * Copyright (c) 2014-2023, Arizona Board of Regents.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,15 +30,14 @@
 #include <limits>
 #include <optional>
 #include <sstream>
-#include <string_view>
 #include <vector>
 
 #include <boost/asio/deadline_timer.hpp>
-#include <boost/asio/io_service.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/signal_set.hpp>
+#include <boost/core/noncopyable.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/lexical_cast.hpp>
-#include <boost/noncopyable.hpp>
 #include <boost/program_options/options_description.hpp>
 #include <boost/program_options/parsers.hpp>
 #include <boost/program_options/variables_map.hpp>
@@ -58,12 +57,26 @@ using std::ofstream;
 using std::to_string;
 #include <cstdlib>
 
-namespace po = boost::program_options;
+//header for zipf distribution
+#include "discrete_distribution.h"
+#include "discrete_distribution_ii.h"
+#include "zipf-mandelbrot.h"
+
+
+//header for custom log
+#include <iostream>
+using std::cerr;
+using std::endl;
+#include <fstream>
+using std::ofstream;
+using std::to_string;
+#include <cstdlib>
+
 using namespace ndn::time_literals;
 using namespace std::string_literals;
 
 // default configuration
-int mode = 1, nprefix = 0, total_percentage=0;
+int mode = 1, nprefix = 0;
 float zipffactor = 0.8, qvalue = 3; 
 
 void mode_selection(int x){
@@ -86,11 +99,8 @@ class NdnTrafficClient : boost::noncopyable
 {
 public:
   explicit
-  NdnTrafficClient(const std::string& configFile)
-    : m_signalSet(m_ioService, SIGINT, SIGTERM)
-    , m_logger("NdnTrafficClient")
-    , m_face(m_ioService)
-    , m_configurationFile(configFile)
+  NdnTrafficClient(std::string configFile)
+    : m_configurationFile(std::move(configFile))
   {
   }
 
@@ -108,9 +118,21 @@ public:
   }
 
   void
+  setTimestampFormat(std::string format)
+  {
+    m_timestampFormat = std::move(format);
+  }
+
+  void
   setQuietLogging()
   {
     m_wantQuiet = true;
+  }
+
+  void
+  setVerboseLogging()
+  {
+    m_wantVerbose = true;
   }
 
   int
@@ -137,7 +159,7 @@ public:
       return 2;
     }
 
-    m_logger.log("Traffic configuration file processing completed.\n", true, false);
+    m_logger.log("Traffic configuration file processing completed\n", true, false);
     for (std::size_t i = 0; i < m_trafficPatterns.size(); i++) {
       m_logger.log("Traffic Pattern Type #" + std::to_string(i + 1), false, false);
       m_trafficPatterns[i].printTrafficConfiguration(m_logger);
@@ -151,8 +173,7 @@ public:
 
     m_signalSet.async_wait([this] (auto&&...) { stop(); });
 
-    boost::asio::deadline_timer timer(m_ioService,
-                                      boost::posix_time::millisec(m_interestInterval.count()));
+    boost::asio::deadline_timer timer(m_io, boost::posix_time::millisec(m_interestInterval.count()));
     timer.async_wait([this, &timer] (auto&&...) { generateTraffic(timer); });
 
     try {
@@ -161,7 +182,7 @@ public:
     }
     catch (const std::exception& e) {
       m_logger.log("ERROR: "s + e.what(), true, true);
-      m_ioService.stop();
+      m_io.stop();
       return 1;
     }
   }
@@ -218,10 +239,12 @@ private:
       }
 
       if (parameter == "TrafficPercentage") {
-        m_trafficPercentage = std::stoul(value);
-
-        //calculate total_percentage
-        total_percentage += m_trafficPercentage;
+        m_trafficPercentage = std::stod(value);
+        if (!std::isfinite(m_trafficPercentage)) {
+          logger.log("Line " + std::to_string(lineNumber) +
+                     " - TrafficPercentage must be a finite floating point value", false, true);
+          return false;
+        }
       }
       else if (parameter == "Name") {
         m_name = value;
@@ -267,13 +290,13 @@ private:
     }
 
   public:
-    uint8_t m_trafficPercentage = 0;
+    double m_trafficPercentage = 0.0;
     std::string m_name;
     std::optional<std::size_t> m_nameAppendBytes;
     std::optional<uint64_t> m_nameAppendSeqNum;
     bool m_canBePrefix = false;
     bool m_mustBeFresh = false;
-    uint8_t m_nonceDuplicationPercentage = 0;
+    unsigned m_nonceDuplicationPercentage = 0;
     time::milliseconds m_interestLifetime = -1_ms;
     uint64_t m_nextHopFaceId = 0;
     std::optional<std::string> m_expectedContent;
@@ -292,21 +315,19 @@ private:
   void
   logStatistics()
   {
-    m_logger.log("\n\n== Interest Traffic Report ==\n", false, true);
-    m_logger.log("Total Traffic Pattern Types = " +
-                 std::to_string(m_trafficPatterns.size()), false, true);
-    m_logger.log("Total Interests Sent        = " +
-                 std::to_string(m_nInterestsSent), false, true);
-    m_logger.log("Total Responses Received    = " +
-                 std::to_string(m_nInterestsReceived), false, true);
-    m_logger.log("Total Nacks Received        = " +
-                 std::to_string(m_nNacks), false, true);
+    using std::to_string;
+
+    m_logger.log("\n\n== Traffic Report ==\n", false, true);
+    m_logger.log("Total Traffic Pattern Types = " + to_string(m_trafficPatterns.size()), false, true);
+    m_logger.log("Total Interests Sent        = " + to_string(m_nInterestsSent), false, true);
+    m_logger.log("Total Responses Received    = " + to_string(m_nInterestsReceived), false, true);
+    m_logger.log("Total Nacks Received        = " + to_string(m_nNacks), false, true);
 
     double loss = 0.0;
     if (m_nInterestsSent > 0) {
       loss = (m_nInterestsSent - m_nInterestsReceived) * 100.0 / m_nInterestsSent;
     }
-    m_logger.log("Total Interest Loss         = " + std::to_string(loss) + "%", false, true);
+    m_logger.log("Total Interest Loss         = " + to_string(loss) + "%", false, true);
 
     double average = 0.0;
     double inconsistency = 0.0;
@@ -314,12 +335,19 @@ private:
       average = m_totalInterestRoundTripTime / m_nInterestsReceived;
       inconsistency = m_nContentInconsistencies * 100.0 / m_nInterestsReceived;
     }
-    m_logger.log("Total Data Inconsistency    = " +
-                 std::to_string(inconsistency) + "%", false, true);
-    m_logger.log("Total Round Trip Time       = " +
-                 std::to_string(m_totalInterestRoundTripTime) + "ms", false, true);
-    m_logger.log("Average Round Trip Time     = " +
-                 std::to_string(average) + "ms\n", false, true);
+    m_logger.log("Total Data Inconsistency    = " + to_string(inconsistency) + "%", false, true);
+    m_logger.log("Total Round Trip Time       = " + to_string(m_totalInterestRoundTripTime) + "ms", false, true);
+    m_logger.log("Average Round Trip Time     = " + to_string(average) + "ms\n", false, true);
+
+    //generate log.csv for overall status
+    ofstream outdata;
+    outdata.open("log.csv");
+    if( !outdata){
+      cerr << "Error FILE" << endl;
+    }
+
+    outdata << "PatternID,InterestSent,ResponsesReceived,Nacks,InterestLoss(%),Inconsistency(%),TotalRTT(ms),AverageRTT(ms)" << endl;
+    outdata << "Overall," << to_string(m_nInterestsSent) << "," << to_string(m_nInterestsReceived) << "," << to_string(m_nNacks) << "," << to_string(loss) << "," << to_string(inconsistency) << "," << to_string(m_totalInterestRoundTripTime) << "," << to_string(average) << "," << endl;
 
     //generate log.csv for overall status
     ofstream outdata;
@@ -332,34 +360,30 @@ private:
     outdata << "Overall," << to_string(m_nInterestsSent) << "," << to_string(m_nInterestsReceived) << "," << to_string(m_nNacks) << "," << to_string(loss) << "," << to_string(inconsistency) << "," << to_string(m_totalInterestRoundTripTime) << "," << to_string(average) << "," << endl;
 
     for (std::size_t patternId = 0; patternId < m_trafficPatterns.size(); patternId++) {
-      m_logger.log("Traffic Pattern Type #" + std::to_string(patternId + 1), false, true);
-      m_trafficPatterns[patternId].printTrafficConfiguration(m_logger);
-      m_logger.log("Total Interests Sent        = " +
-                   std::to_string(m_trafficPatterns[patternId].m_nInterestsSent), false, true);
-      m_logger.log("Total Responses Received    = " +
-                   std::to_string(m_trafficPatterns[patternId].m_nInterestsReceived), false, true);
-      m_logger.log("Total Nacks Received        = " +
-                   std::to_string(m_trafficPatterns[patternId].m_nNacks), false, true);
-      loss = 0;
-      if (m_trafficPatterns[patternId].m_nInterestsSent > 0) {
-        loss = m_trafficPatterns[patternId].m_nInterestsSent - m_trafficPatterns[patternId].m_nInterestsReceived;
-        loss *= 100.0;
-        loss /= m_trafficPatterns[patternId].m_nInterestsSent;
-      }
-      m_logger.log("Total Interest Loss         = " + std::to_string(loss) + "%", false, true);
-      average = 0;
-      inconsistency = 0;
-      if (m_trafficPatterns[patternId].m_nInterestsReceived > 0) {
-        average = m_trafficPatterns[patternId].m_totalInterestRoundTripTime /
-                  m_trafficPatterns[patternId].m_nInterestsReceived;
-        inconsistency = m_trafficPatterns[patternId].m_nContentInconsistencies;
-        inconsistency *= 100.0 / m_trafficPatterns[patternId].m_nInterestsReceived;
-      }
-      m_logger.log("Total Data Inconsistency    = " + std::to_string(inconsistency) + "%", false, true);
-      m_logger.log("Total Round Trip Time       = " +
-                   std::to_string(m_trafficPatterns[patternId].m_totalInterestRoundTripTime) + "ms", false, true);
-      m_logger.log("Average Round Trip Time     = " + std::to_string(average) + "ms\n", false, true);
+      const auto& pattern = m_trafficPatterns[patternId];
 
+      m_logger.log("Traffic Pattern Type #" + to_string(patternId + 1), false, true);
+      pattern.printTrafficConfiguration(m_logger);
+      m_logger.log("Total Interests Sent        = " + to_string(pattern.m_nInterestsSent), false, true);
+      m_logger.log("Total Responses Received    = " + to_string(pattern.m_nInterestsReceived), false, true);
+      m_logger.log("Total Nacks Received        = " + to_string(pattern.m_nNacks), false, true);
+
+      loss = 0.0;
+      if (pattern.m_nInterestsSent > 0) {
+        loss = (pattern.m_nInterestsSent - pattern.m_nInterestsReceived) * 100.0 / pattern.m_nInterestsSent;
+      }
+      m_logger.log("Total Interest Loss         = " + to_string(loss) + "%", false, true);
+
+      average = 0.0;
+      inconsistency = 0.0;
+      if (pattern.m_nInterestsReceived > 0) {
+        average = pattern.m_totalInterestRoundTripTime / pattern.m_nInterestsReceived;
+        inconsistency = pattern.m_nContentInconsistencies * 100.0 / pattern.m_nInterestsReceived;
+      }
+      m_logger.log("Total Data Inconsistency    = " + to_string(inconsistency) + "%", false, true);
+      m_logger.log("Total Round Trip Time       = " +
+                   to_string(pattern.m_totalInterestRoundTripTime) + "ms", false, true);
+      m_logger.log("Average Round Trip Time     = " + to_string(average) + "ms\n", false, true);
       //per traffic log
       outdata << to_string(patternId + 1) << "," << to_string(m_trafficPatterns[patternId].m_nInterestsSent) << "," << to_string(m_trafficPatterns[patternId].m_nInterestsReceived) << "," << to_string(m_trafficPatterns[patternId].m_nNacks) << "," << to_string(loss) << "," << to_string(inconsistency) << "," << to_string(m_trafficPatterns[patternId].m_totalInterestRoundTripTime) << "," << to_string(average) << endl; 
     }
@@ -403,8 +427,8 @@ private:
   generateRandomNameComponent(std::size_t length)
   {
     // per ISO C++ std, cannot instantiate uniform_int_distribution with uint8_t
-    static std::uniform_int_distribution<unsigned short> dist(std::numeric_limits<uint8_t>::min(),
-                                                              std::numeric_limits<uint8_t>::max());
+    static std::uniform_int_distribution<unsigned> dist(std::numeric_limits<uint8_t>::min(),
+                                                        std::numeric_limits<uint8_t>::max());
 
     ndn::Buffer buf(length);
     for (std::size_t i = 0; i < length; i++) {
@@ -433,7 +457,7 @@ private:
     interest.setCanBePrefix(pattern.m_canBePrefix);
     interest.setMustBeFresh(pattern.m_mustBeFresh);
 
-    static std::uniform_int_distribution<> duplicateNonceDist(1, 100);
+    static std::uniform_int_distribution<unsigned> duplicateNonceDist(1, 100);
     if (duplicateNonceDist(ndn::random::getRandomNumberEngine()) <= pattern.m_nonceDuplicationPercentage)
       interest.setNonce(getOldNonce());
     else
@@ -449,9 +473,10 @@ private:
   }
 
   void
-  onData(const ndn::Data& data, int globalRef, int localRef, std::size_t patternId,
-         const time::steady_clock::time_point& sentTime, const ndn::Interest& interest)
+  onData(const ndn::Interest&, const ndn::Data& data, int globalRef, int localRef,
+         std::size_t patternId, const time::steady_clock::time_point& sentTime)
   {
+    auto now = time::steady_clock::now();
     auto logLine = "Data Received      - PatternType=" + std::to_string(patternId + 1) +
                    ", GlobalID=" + std::to_string(globalRef) +
                    ", LocalID=" + std::to_string(localRef) +
@@ -478,27 +503,22 @@ private:
       m_logger.log(logLine, true, false);
     }
 
-    double roundTripTime = (time::steady_clock::now() - sentTime).count() / 1000000.0;
-    if (m_minimumInterestRoundTripTime > roundTripTime)
-      m_minimumInterestRoundTripTime = roundTripTime;
-    if (m_maximumInterestRoundTripTime < roundTripTime)
-      m_maximumInterestRoundTripTime = roundTripTime;
-    if (m_trafficPatterns[patternId].m_minimumInterestRoundTripTime > roundTripTime)
-      m_trafficPatterns[patternId].m_minimumInterestRoundTripTime = roundTripTime;
-    if (m_trafficPatterns[patternId].m_maximumInterestRoundTripTime < roundTripTime)
-      m_trafficPatterns[patternId].m_maximumInterestRoundTripTime = roundTripTime;
-    m_totalInterestRoundTripTime += roundTripTime;
-    m_trafficPatterns[patternId].m_totalInterestRoundTripTime += roundTripTime;
-
-    //log rtt per packet
-    ofstream outfile;
-    outfile.open("interest.csv", std::ios_base::app);
-    if( !outfile){
-      cerr << "Error FILE" << endl;
+    double rtt = time::duration_cast<time::nanoseconds>(now - sentTime).count() / 1e6;
+    if (m_wantVerbose) {
+      auto rttLine = "RTT                - Name=" + data.getName().toUri() +
+                     ", RTT=" + std::to_string(rtt) + "ms";
+      m_logger.log(rttLine, true, false);
     }
-    outfile << interest << "," << to_string(roundTripTime) << endl;
-    outfile.close();
-
+    if (m_minimumInterestRoundTripTime > rtt)
+      m_minimumInterestRoundTripTime = rtt;
+    if (m_maximumInterestRoundTripTime < rtt)
+      m_maximumInterestRoundTripTime = rtt;
+    if (m_trafficPatterns[patternId].m_minimumInterestRoundTripTime > rtt)
+      m_trafficPatterns[patternId].m_minimumInterestRoundTripTime = rtt;
+    if (m_trafficPatterns[patternId].m_maximumInterestRoundTripTime < rtt)
+      m_trafficPatterns[patternId].m_maximumInterestRoundTripTime = rtt;
+    m_totalInterestRoundTripTime += rtt;
+    m_trafficPatterns[patternId].m_totalInterestRoundTripTime += rtt;
 
     if (m_nMaximumInterests == globalRef) {
       stop();
@@ -525,7 +545,7 @@ private:
   }
 
   void
-  onTimeout(const ndn::Interest& interest, int globalRef, int localRef, int patternId)
+  onTimeout(const ndn::Interest& interest, int globalRef, int localRef, std::size_t patternId)
   {
     auto logLine = "Interest Timed Out - PatternType=" + std::to_string(patternId + 1) +
                    ", GlobalID=" + std::to_string(globalRef) +
@@ -561,25 +581,30 @@ private:
     int cumulativePercentage = 0;
     std::size_t patternId = 0;
     for (; patternId < m_trafficPatterns.size(); patternId++) {
-      cumulativePercentage += m_trafficPatterns[patternId].m_trafficPercentage;
+      auto& pattern = m_trafficPatterns[patternId];
+      cumulativePercentage += pattern.m_trafficPercentage;
       if (trafficKey <= cumulativePercentage) {
+        m_nInterestsSent++;
+        pattern.m_nInterestsSent++;
         auto interest = prepareInterest(patternId);
         try {
-          m_nInterestsSent++;
-          m_trafficPatterns[patternId].m_nInterestsSent++;
-          auto sentTime = time::steady_clock::now();
+          int globalRef = m_nInterestsSent;
+          int localRef = pattern.m_nInterestsSent;
           m_face.expressInterest(interest,
-                                 bind(&NdnTrafficClient::onData, this, _2, m_nInterestsSent,
-                                      m_trafficPatterns[patternId].m_nInterestsSent, patternId, sentTime, interest),
-                                 bind(&NdnTrafficClient::onNack, this, _1, _2, m_nInterestsSent,
-                                      m_trafficPatterns[patternId].m_nInterestsSent, patternId),
-                                 bind(&NdnTrafficClient::onTimeout, this, _1, m_nInterestsSent,
-                                      m_trafficPatterns[patternId].m_nInterestsSent, patternId));
+            [=, now = time::steady_clock::now()] (auto&&... args) {
+              onData(std::forward<decltype(args)>(args)..., globalRef, localRef, patternId, now);
+            },
+            [=] (auto&&... args) {
+              onNack(std::forward<decltype(args)>(args)..., globalRef, localRef, patternId);
+            },
+            [=] (auto&&... args) {
+              onTimeout(std::forward<decltype(args)>(args)..., globalRef, localRef, patternId);
+            });
 
           if (!m_wantQuiet) {
             auto logLine = "Sending Interest   - PatternType=" + std::to_string(patternId + 1) +
                            ", GlobalID=" + std::to_string(m_nInterestsSent) +
-                           ", LocalID=" + std::to_string(m_trafficPatterns[patternId].m_nInterestsSent) +
+                           ", LocalID=" + std::to_string(pattern.m_nInterestsSent) +
                            ", Name=" + interest.getName().toUri();
             m_logger.log(logLine, true, false);
           }
@@ -593,6 +618,7 @@ private:
         break;
       }
     }
+
     if (patternId == m_trafficPatterns.size()) {
       timer.expires_at(timer.expires_at() + boost::posix_time::millisec(m_interestInterval.count()));
       timer.async_wait([this, &timer] (auto&&...) { generateTraffic(timer); });
@@ -608,16 +634,17 @@ private:
 
     logStatistics();
     m_face.shutdown();
-    m_ioService.stop();
+    m_io.stop();
   }
 
 private:
-  boost::asio::io_service m_ioService;
-  boost::asio::signal_set m_signalSet;
-  Logger m_logger;
-  ndn::Face m_face;
+  Logger m_logger{"NdnTrafficClient"};
+  boost::asio::io_context m_io;
+  boost::asio::signal_set m_signalSet{m_io, SIGINT, SIGTERM};
+  ndn::Face m_face{m_io};
 
   std::string m_configurationFile;
+  std::string m_timestampFormat;
   std::optional<uint64_t> m_nMaximumInterests;
   time::milliseconds m_interestInterval = 1_s;
 
@@ -634,10 +661,13 @@ private:
   double m_totalInterestRoundTripTime = 0;
 
   bool m_wantQuiet = false;
+  bool m_wantVerbose = false;
   bool m_hasError = false;
 };
 
 } // namespace ndntg
+
+namespace po = boost::program_options;
 
 static void
 usage(std::ostream& os, std::string_view programName, const po::options_description& desc)
@@ -660,17 +690,20 @@ int
 main(int argc, char* argv[])
 {
   std::string configFile;
+  std::string timestampFormat;
 
   po::options_description visibleOptions("Options");
   visibleOptions.add_options()
     ("help,h",      "print this help message and exit")
-    ("count,c",     po::value<int>(), "total number of Interests to be generated")
+    ("count,c",     po::value<int64_t>(), "total number of Interests to be generated")
     ("interval,i",  po::value<ndn::time::milliseconds::rep>()->default_value(1000),
                     "Interest generation interval in milliseconds")
-    ("quiet,q",     po::bool_switch(), "turn off logging of Interest generation/Data reception")
+    ("timestamp-format,t", po::value<std::string>(&timestampFormat), "format string for timestamp output")
+    ("quiet,q",     po::bool_switch(), "turn off logging of Interest generation and Data reception")
+    ("verbose,v",   po::bool_switch(), "log additional per-packet information")
     ("mode,m",      po::value<int>(), "(int) Distribution choice : 1. Uniform, 2. Zipf-Mandelbrot; Default = Uniform")
     ("zipffactor,z",po::value<float>(), "(float) Used in Zipf-Mandelbrot as s value, default = 0.5")
-    ("qvalue,v",   po::value<float>(), "(float) Used in Zipf-Mandelbrot as q value, default = 0")
+    ("qvalue,qv",   po::value<float>(), "(float) Used in Zipf-Mandelbrot as q value, default = 0")
     ;
 
   po::options_description hiddenOptions;
@@ -726,12 +759,12 @@ main(int argc, char* argv[])
     return 2;
   }
 
-  ndntg::NdnTrafficClient client(configFile);
+  ndntg::NdnTrafficClient client(std::move(configFile));
 
   if (vm.count("count") > 0) {
-    int count = vm["count"].as<int>();
+    auto count = vm["count"].as<int64_t>();
     if (count < 0) {
-      std::cerr << "ERROR: the argument for option '--count' cannot be negative" << std::endl;
+      std::cerr << "ERROR: the argument for option '--count' cannot be negative\n";
       return 2;
     }
     client.setMaximumInterests(static_cast<uint64_t>(count));
@@ -740,14 +773,26 @@ main(int argc, char* argv[])
   if (vm.count("interval") > 0) {
     ndn::time::milliseconds interval(vm["interval"].as<ndn::time::milliseconds::rep>());
     if (interval <= 0_ms) {
-      std::cerr << "ERROR: the argument for option '--interval' must be positive" << std::endl;
+      std::cerr << "ERROR: the argument for option '--interval' must be positive\n";
       return 2;
     }
     client.setInterestInterval(interval);
   }
 
+  if (!timestampFormat.empty()) {
+    client.setTimestampFormat(std::move(timestampFormat));
+  }
+
   if (vm["quiet"].as<bool>()) {
+    if (vm["verbose"].as<bool>()) {
+      std::cerr << "ERROR: cannot set both '--quiet' and '--verbose'\n";
+      return 2;
+    }
     client.setQuietLogging();
+  }
+
+  if (vm["verbose"].as<bool>()) {
+    client.setVerboseLogging();
   }
 
   return client.run();

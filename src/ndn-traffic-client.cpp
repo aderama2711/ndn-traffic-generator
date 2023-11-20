@@ -76,7 +76,7 @@ using namespace ndn::time_literals;
 using namespace std::string_literals;
 
 // default configuration
-int mode = 1, nprefix = 0;
+int mode = 1, nprefix = 0, total_percentage = 0;
 float zipffactor = 0.8, qvalue = 3; 
 
 void mode_selection(int x){
@@ -243,6 +243,7 @@ private:
         if (!std::isfinite(m_trafficPercentage)) {
           logger.log("Line " + std::to_string(lineNumber) +
                      " - TrafficPercentage must be a finite floating point value", false, true);
+                     total_percentage += int(m_trafficPercentage);
           return false;
         }
       }
@@ -558,7 +559,7 @@ private:
     int trafficKey;
 
     if (mode == 1){
-      static std::uniform_int_distribution<> trafficDist(1, m_trafficPercentage);
+      static std::uniform_int_distribution<> trafficDist(1, total_percentage);
       trafficKey = trafficDist(ndn::random::getRandomNumberEngine());
     }
 

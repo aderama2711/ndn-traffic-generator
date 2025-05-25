@@ -42,7 +42,37 @@
 #include <boost/program_options/parsers.hpp>
 #include <boost/program_options/variables_map.hpp>
 
+//header for zipf distribution
+#include "discrete_distribution.h"
+#include "discrete_distribution_ii.h"
+#include "zipf-mandelbrot.h"
+
+//header for custom log
+#include <iostream>
+using std::cerr;
+using std::endl;
+#include <fstream>
+using std::ofstream;
+using std::to_string;
+#include <cstdlib>
+
 using namespace std::chrono_literals;
+
+// default configuration
+int mode = 1, nprefix = 0, total_percentage=0;
+float zipffactor = 0.8, qvalue = 3; 
+
+void mode_selection(int x){
+  mode = x;
+}
+
+void qvalue_assign(float x){
+  qvalue = x;
+}
+
+void zipffactor_assign(float x){
+  zipffactor = x;
+}
 
 namespace ndntg {
 
@@ -193,6 +223,12 @@ private:
       }
       else if (parameter == "Name") {
         m_name = value;
+
+        //calculate number of prefix
+        nprefix++;
+      }
+      else if (parameter == "Name") {
+        m_name = value;
       }
       else if (parameter == "NameAppendBytes") {
         m_nameAppendBytes = std::stoul(value);
@@ -281,6 +317,16 @@ private:
     m_logger.log("Total Round Trip Time       = " + to_string(m_totalInterestRoundTripTime) + "ms", false, true);
     m_logger.log("Average Round Trip Time     = " + to_string(average) + "ms\n", false, true);
 
+    //generate log.csv for overall status
+    ofstream outdata;
+    outdata.open("log.csv");
+    if( !outdata){
+      cerr << "Error FILE" << endl;
+    }
+
+    outdata << "PatternID,InterestSent,ResponsesReceived,Nacks,InterestLoss(%),Inconsistency(%),TotalRTT(ms),AverageRTT(ms)" << endl;
+    outdata << "Overall," << to_string(m_nInterestsSent) << "," << to_string(m_nInterestsReceived) << "," << to_string(m_nNacks) << "," << to_string(loss) << "," << to_string(inconsistency) << "," << to_string(m_totalInterestRoundTripTime) << "," << to_string(average) << "," << endl;
+
     for (std::size_t patternId = 0; patternId < m_trafficPatterns.size(); patternId++) {
       const auto& pattern = m_trafficPatterns[patternId];
 
@@ -306,7 +352,11 @@ private:
       m_logger.log("Total Round Trip Time       = " +
                    to_string(pattern.m_totalInterestRoundTripTime) + "ms", false, true);
       m_logger.log("Average Round Trip Time     = " + to_string(average) + "ms\n", false, true);
+
+      //per traffic log
+      outdata << to_string(patternId + 1) << "," << to_string(m_trafficPatterns[patternId].m_nInterestsSent) << "," << to_string(m_trafficPatterns[patternId].m_nInterestsReceived) << "," << to_string(m_trafficPatterns[patternId].m_nNacks) << "," << to_string(loss) << "," << to_string(inconsistency) << "," << to_string(m_trafficPatterns[patternId].m_totalInterestRoundTripTime) << "," << to_string(average) << endl;     
     }
+    outdata.close();
   }
 
   bool
@@ -482,8 +532,18 @@ private:
       return;
     }
 
+    double trafficKey;
+
+    if (mode == 1){
     static std::uniform_real_distribution<> trafficDist(std::numeric_limits<double>::min(), 100.0);
-    double trafficKey = trafficDist(ndn::random::getRandomNumberEngine());
+    trafficKey = trafficDist(ndn::random::getRandomNumberEngine());
+    }
+
+    if (mode == 2){
+      static rng::zipf_mandelbrot_distribution<rng::discrete_distribution_30bit,int> trafficDistZipf(zipffactor, qvalue, nprefix);
+      trafficKey = trafficDistZipf(ndn::random::getRandomNumberEngine());
+      trafficKey -= qvalue;
+    }
 
     double cumulativePercentage = 0.0;
     std::size_t patternId = 0;
@@ -585,6 +645,11 @@ usage(std::ostream& os, std::string_view programName, const po::options_descript
      << "Interests are continuously generated unless a total number is specified.\n"
      << "Set the environment variable NDN_TRAFFIC_LOGFOLDER to redirect output to a log file.\n"
      << "\n"
+     << "Modification :\n"
+     << "+ Zipf-Mandelbrot Distribution\n"
+     << "Warning\n"
+     << "- Please set all traffic percentage to 1\n"
+     << "\n"
      << desc;
 }
 
@@ -603,6 +668,9 @@ main(int argc, char* argv[])
     ("timestamp-format,t", po::value<std::string>(&timestampFormat), "format string for timestamp output")
     ("quiet,q",     po::bool_switch(), "turn off logging of Interest generation and Data reception")
     ("verbose,v",   po::bool_switch(), "log additional per-packet information")
+    ("mode,m",      po::value<int>(), "(int) Distribution choice : 1. Uniform, 2. Zipf-Mandelbrot; Default = Uniform")
+    ("zipffactor,z",po::value<float>(), "(float) Used in Zipf-Mandelbrot as s value, default = 0.5")
+    ("qvalue,v",   po::value<float>(), "(float) Used in Zipf-Mandelbrot as q value, default = 0")
     ;
 
   po::options_description hiddenOptions;
@@ -628,6 +696,24 @@ main(int argc, char* argv[])
   catch (const boost::bad_any_cast& e) {
     std::cerr << "ERROR: " << e.what() << std::endl;
     return 2;
+  }
+
+  if (vm.count("mode") > 0) {
+    int y = vm["mode"].as<int>();
+    if (y != 1 && y != 2){
+      return 2;
+    }
+    mode_selection(y);
+  }
+
+  if (vm.count("zipffactor") > 0) {
+    float y = vm["zipffactor"].as<float>();
+    zipffactor_assign(y);
+  }
+
+  if (vm.count("qvalue") > 0) {
+    float y = vm["qvalue"].as<float>();
+    qvalue_assign(y);
   }
 
   if (vm.count("help") > 0) {
